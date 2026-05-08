@@ -95,15 +95,15 @@ public struct WASMBuilder {
             //     "js",
             // ],
             workingDirectory: FilePath(packageURL.path),
-            output: .string(limit: 65_536),
-            error: .string(limit: 65_536)
+            output: .standardOutput,
+            error: .standardError,
         )
 
         guard result.terminationStatus.isSuccess else {
             throw WASMBuilderError.buildFailed(
                 status: result.terminationStatus.description,
-                standardOutput: result.standardOutput ?? "",
-                standardError: result.standardError ?? ""
+                standardOutput: "",
+                standardError: "",
             )
         }
 
