@@ -98,14 +98,6 @@ public struct WASMBuilder {
         let result = try await run(
             .name("swift"),
             arguments: Arguments(buildArguments),
-            // arguments: [
-            //     "package",
-            //     "--swift-sdk",
-            //     "swift-6.3.1-RELEASE_wasm-embedded",
-            //     "--configuration",
-            //     "release",
-            //     "js",
-            // ],
             workingDirectory: FilePath(packageURL.path),
             output: .standardOutput,
             error: .standardError,
