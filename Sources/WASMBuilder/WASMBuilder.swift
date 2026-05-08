@@ -5,7 +5,13 @@ import System
 public struct WASMBuilder {
     public init() {}
 
-    public func build(swiftAppPackage: String, outputFile: String, sdk: SwiftSDK = .wasmEmbedded, target: String? = nil) async throws {
+    public func build(
+        swiftAppPackage: String,
+        outputFile: String,
+        sdk: SwiftSDK = .wasmEmbedded,
+        target: String? = nil,
+        linkEmbeddedUnicodeDataTables: Bool = false
+    ) async throws {
         let fileManager = FileManager.default
         let packageURL = URL(fileURLWithPath: swiftAppPackage)
         let outputURL = URL(fileURLWithPath: outputFile)
@@ -30,7 +36,12 @@ public struct WASMBuilder {
 
         try await addWrapperProduct(to: temporaryPackageURL, target: resolvedTarget.name)
         try PackageManifestParser.removeAppleProductTypesIfPresent(in: temporaryPackageURL)
-        try await buildPackage(at: temporaryPackageURL, outputURL: outputURL, sdk: sdk)
+        try await buildPackage(
+            at: temporaryPackageURL,
+            outputURL: outputURL,
+            sdk: sdk,
+            linkEmbeddedUnicodeDataTables: linkEmbeddedUnicodeDataTables
+        )
     }
 
     public func build(sourceFile: String, outputFile: String) async throws {
@@ -65,27 +76,28 @@ public struct WASMBuilder {
 
         try wrappedSource.write(to: wrapperMainURL, atomically: true, encoding: .utf8)
 
-        try await buildPackage(at: temporaryPackageURL, outputURL: outputURL, sdk: .wasmEmbedded)
+        try await buildPackage(
+            at: temporaryPackageURL,
+            outputURL: outputURL,
+            sdk: .wasmEmbedded,
+            linkEmbeddedUnicodeDataTables: false
+        )
     }
 
-    private func buildPackage(at packageURL: URL, outputURL: URL, sdk: SwiftSDK) async throws {
-        let sdk = switch sdk {
-        case .wasm:
-            "swift-6.3.1-RELEASE_wasm"
-        case .wasmEmbedded:
-            "swift-6.3.1-RELEASE_wasm-embedded"
-        }
-
+    private func buildPackage(
+        at packageURL: URL,
+        outputURL: URL,
+        sdk: SwiftSDK,
+        linkEmbeddedUnicodeDataTables: Bool
+    ) async throws {
         let fileManager = FileManager.default
+        let buildArguments = try swiftBuildArguments(
+            sdk: sdk,
+            linkEmbeddedUnicodeDataTables: linkEmbeddedUnicodeDataTables
+        )
         let result = try await run(
             .name("swift"),
-            arguments: [
-                "build",
-                "--swift-sdk",
-                sdk,
-                "--configuration",
-                "release",
-            ],
+            arguments: Arguments(buildArguments),
             // arguments: [
             //     "package",
             //     "--swift-sdk",
@@ -147,6 +159,41 @@ public struct WASMBuilder {
     }
 }
 
+func swiftBuildArguments(
+    sdk: SwiftSDK,
+    linkEmbeddedUnicodeDataTables: Bool,
+    swiftSDKsDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library")
+        .appendingPathComponent("org.swift.swiftpm")
+        .appendingPathComponent("swift-sdks")
+) throws -> [String] {
+    var arguments = [
+        "build",
+        "--swift-sdk",
+        sdk.identifier,
+        "--configuration",
+        "release",
+    ]
+
+    if linkEmbeddedUnicodeDataTables {
+        let unicodeDataTablesURL = try SwiftSDKArtifactResolver(
+            swiftSDKsDirectory: swiftSDKsDirectory
+        )
+        .unicodeDataTablesLibrary(for: sdk)
+
+        arguments += [
+            "-Xlinker",
+            "--whole-archive",
+            "-Xlinker",
+            unicodeDataTablesURL.path,
+            "-Xlinker",
+            "--no-whole-archive",
+        ]
+    }
+
+    return arguments
+}
+
 private func wasmEntryPointShim(entryPointType: String) -> String {
     """
 
@@ -181,6 +228,9 @@ private enum WASMBuilderError: Error, CustomStringConvertible {
     case missingEntryPoint(String)
     case missingEntryPointType(String)
     case addProductFailed(status: String, standardOutput: String, standardError: String)
+    case unsupportedUnicodeDataTablesSDK(SwiftSDK)
+    case missingSwiftSDK(String)
+    case missingUnicodeDataTablesLibrary(sdk: String, path: String)
 
     var description: String {
         switch self {
@@ -224,8 +274,95 @@ private enum WASMBuilderError: Error, CustomStringConvertible {
                 Standard error:
                 \(standardError)
                 """
+        case .unsupportedUnicodeDataTablesSDK(let sdk):
+            return "Embedded Unicode data tables can only be linked with the wasm-embedded SDK, not \(sdk.identifier)."
+        case .missingSwiftSDK(let sdk):
+            return "The Swift SDK \(sdk) was not found in the installed Swift SDK artifact bundles."
+        case .missingUnicodeDataTablesLibrary(let sdk, let path):
+            return "The Swift SDK \(sdk) is missing libswiftUnicodeDataTables.a at \(path)."
         }
     }
+}
+
+struct SwiftSDKArtifactResolver {
+    var swiftSDKsDirectory: URL
+
+    func unicodeDataTablesLibrary(for sdk: SwiftSDK) throws -> URL {
+        guard sdk == .wasmEmbedded else {
+            throw WASMBuilderError.unsupportedUnicodeDataTablesSDK(sdk)
+        }
+
+        let fileManager = FileManager.default
+        let artifactBundleURLs = (try? fileManager.contentsOfDirectory(
+            at: swiftSDKsDirectory,
+            includingPropertiesForKeys: nil
+        ))?
+            .filter { $0.pathExtension == "artifactbundle" } ?? []
+
+        for artifactBundleURL in artifactBundleURLs {
+            let infoURL = artifactBundleURL.appendingPathComponent("info.json")
+            guard fileManager.fileExists(atPath: infoURL.path) else {
+                continue
+            }
+
+            let infoData = try Data(contentsOf: infoURL)
+            let info = try JSONDecoder().decode(SwiftSDKArtifactBundleInfo.self, from: infoData)
+            guard let artifact = info.artifacts[sdk.identifier],
+                let variant = artifact.variants.first
+            else {
+                continue
+            }
+
+            let sdkJSONURL = artifactBundleURL.appendingPathComponent(variant.path)
+            let sdkData = try Data(contentsOf: sdkJSONURL)
+            let metadata = try JSONDecoder().decode(SwiftSDKMetadata.self, from: sdkData)
+
+            guard let targetTriple = metadata.targetTriples.keys.sorted().first,
+                let target = metadata.targetTriples[targetTriple]
+            else {
+                continue
+            }
+
+            let sdkRootURL = sdkJSONURL
+                .deletingLastPathComponent()
+                .appendingPathComponent(target.swiftResourcesPath)
+            let unicodeDataTablesURL = sdkRootURL
+                .appendingPathComponent("embedded")
+                .appendingPathComponent(targetTriple)
+                .appendingPathComponent("libswiftUnicodeDataTables.a")
+
+            guard fileManager.fileExists(atPath: unicodeDataTablesURL.path) else {
+                throw WASMBuilderError.missingUnicodeDataTablesLibrary(
+                    sdk: sdk.identifier,
+                    path: unicodeDataTablesURL.path
+                )
+            }
+
+            return unicodeDataTablesURL
+        }
+
+        throw WASMBuilderError.missingSwiftSDK(sdk.identifier)
+    }
+}
+
+private struct SwiftSDKArtifactBundleInfo: Decodable {
+    var artifacts: [String: SwiftSDKArtifact]
+}
+
+private struct SwiftSDKArtifact: Decodable {
+    var variants: [SwiftSDKVariant]
+}
+
+private struct SwiftSDKVariant: Decodable {
+    var path: String
+}
+
+private struct SwiftSDKMetadata: Decodable {
+    var targetTriples: [String: SwiftSDKTarget]
+}
+
+private struct SwiftSDKTarget: Decodable {
+    var swiftResourcesPath: String
 }
 
 private struct PackageDescription: Decodable {

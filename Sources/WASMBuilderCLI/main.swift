@@ -15,9 +15,18 @@ struct WASMBuilderCLI: AsyncParsableCommand {
     @Option
     var target: String?
 
+    @Flag
+    var linkEmbeddedUnicodeDataTables = false
+
     mutating func run() async throws {
         let builder = WASMBuilder()
-        try await builder.build(swiftAppPackage: swiftAppPackage, outputFile: outputFile, sdk: sdk, target: target)
+        try await builder.build(
+            swiftAppPackage: swiftAppPackage,
+            outputFile: outputFile,
+            sdk: sdk,
+            target: target,
+            linkEmbeddedUnicodeDataTables: linkEmbeddedUnicodeDataTables
+        )
     }
 }
 
