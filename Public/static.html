@@ -39,39 +39,9 @@
         <h1>Hello, Vapor!</h1>
         <p>Your Swift server is running and ready for routes, middleware, and views.</p>
     </main>
-    <script type="module">
-        // import { WASI, useStdio } from "https://esm.sh/uwasi";
-
-        // async function fetchAndRunWASM() {
-        //     // const wasmResponse = fetch("/wrapper.wasm")
-        //     const wasmResponse = fetch("/swift-embedded.wasm")
-
-        //     const runtime = new WASI({
-        //         features: [
-        //             useStdio({
-        //                 stdout: (str) => { document.body.innerHTML += str; console.log(str) },
-        //                 stderr: (str) => { document.body.innerHTML += str; console.error(str) },
-        //             })
-        //         ]
-        //     });
-
-        //     // const wasmResponse = await fetch("/swift-embedded.wasm")
-        //     // const module = await WebAssembly.compileStreaming(wasmResponse)
-        //     const source = await WebAssembly.instantiateStreaming(
-        //         wasmResponse,
-        //         {
-        //             wasi_snapshot_preview1: runtime.wasiImport,
-        //         }
-        //     )
-        //     console.dir(source.instance)
-        //     // const exitCode = runtime.start(source.instance);
-        //     runtime.initialize(source.instance)
-        //     source.instance.exports.main()
-        // }
-        // fetchAndRunWASM()
-    </script>
     <script>
-        // Codex, add new implementation here.
+        // Could also include something from an established WASI implementation e.g. `import { WASI, useStdio } from "https://esm.sh/uwasi";`
+
         function createMiniWASI({ stdout = () => {}, stderr = () => {} } = {}) {
             const WASI_ERRNO_SUCCESS = 0;
             const WASI_ERRNO_BADF = 8;
