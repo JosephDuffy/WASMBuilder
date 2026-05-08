@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hello Vapor</title>
+    <style>
+        body {
+            align-items: center;
+            background: #f5f7fa;
+            color: #17202a;
+            display: flex;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            justify-content: center;
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        main {
+            max-width: 38rem;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin: 0 0 1rem;
+        }
+
+        p {
+            font-size: 1.125rem;
+            line-height: 1.6;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Hello, Vapor!</h1>
+        <p>Your Swift server is running and ready for routes, middleware, and views.</p>
+    </main>
+    <script type="module">
+        // import { WASI, useStdio } from "https://esm.sh/uwasi";
+
+        // async function fetchAndRunWASM() {
+        //     // const wasmResponse = fetch("/wrapper.wasm")
+        //     const wasmResponse = fetch("/swift-embedded.wasm")
+
+        //     const runtime = new WASI({
+        //         features: [
+        //             useStdio({
+        //                 stdout: (str) => { document.body.innerHTML += str; console.log(str) },
+        //                 stderr: (str) => { document.body.innerHTML += str; console.error(str) },
+        //             })
+        //         ]
+        //     });
+
+        //     // const wasmResponse = await fetch("/swift-embedded.wasm")
+        //     // const module = await WebAssembly.compileStreaming(wasmResponse)
+        //     const source = await WebAssembly.instantiateStreaming(
+        //         wasmResponse,
+        //         {
+        //             wasi_snapshot_preview1: runtime.wasiImport,
+        //         }
+        //     )
+        //     console.dir(source.instance)
+        //     // const exitCode = runtime.start(source.instance);
+        //     runtime.initialize(source.instance)
+        //     source.instance.exports.main()
+        // }
+        // fetchAndRunWASM()
+    </script>
+    <script>
+        // Codex, add new implementation here.
+        function createMiniWASI({ stdout = () => {}, stderr = () => {} } = {}) {
+            const WASI_ERRNO_SUCCESS = 0;
+            const WASI_ERRNO_BADF = 8;
+            const WASI_ERRNO_INVAL = 28;
+            const WASI_ERRNO_SPIPE = 70;
+            const WASI_FILETYPE_CHARACTER_DEVICE = 2;
+            const exitSentinel = Symbol("mini-wasi-exit");
+            let instance = null;
+            let exitCode = null;
+
+            function memoryView() {
+                const memory = instance?.exports?.memory;
+                if (!memory) {
+                    return null;
+                }
+
+                return new DataView(memory.buffer);
+            }
+
+            function memoryBytes() {
+                const memory = instance?.exports?.memory;
+                if (!memory) {
+                    return null;
+                }
+
+                return new Uint8Array(memory.buffer);
+            }
+
+            const wasiImport = {
+                args_sizes_get(argc, argvBufSize) {
+                    const view = memoryView();
+                    if (!view) {
+                        return WASI_ERRNO_INVAL;
+                    }
+
+                    view.setUint32(argc, 0, true);
+                    view.setUint32(argvBufSize, 0, true);
+                    return WASI_ERRNO_SUCCESS;
+                },
+
+                args_get() {
+                    return WASI_ERRNO_SUCCESS;
+                },
+
+                fd_write(fd, iovs, iovsLen, nwritten) {
+                    const view = memoryView();
+                    const bytes = memoryBytes();
+                    if (!view || !bytes) {
+                        return WASI_ERRNO_INVAL;
+                    }
+
+                    if (fd !== 1 && fd !== 2) {
+                        return WASI_ERRNO_BADF;
+                    }
+
+                    let written = 0;
+                    let text = "";
+                    const decoder = new TextDecoder();
+
+                    for (let i = 0; i < iovsLen; i += 1) {
+                        const iov = iovs + (i * 8);
+                        const pointer = view.getUint32(iov, true);
+                        const length = view.getUint32(iov + 4, true);
+                        const chunk = bytes.subarray(pointer, pointer + length);
+                        written += length;
+                        text += decoder.decode(chunk, { stream: true });
+                    }
+
+                    text += decoder.decode();
+                    view.setUint32(nwritten, written, true);
+
+                    if (text.length > 0) {
+                        if (fd === 2) {
+                            stderr(text);
+                        } else {
+                            stdout(text);
+                        }
+                    }
+
+                    return WASI_ERRNO_SUCCESS;
+                },
+
+                fd_fdstat_get(fd, fdstat) {
+                    const view = memoryView();
+                    if (!view) {
+                        return WASI_ERRNO_INVAL;
+                    }
+
+                    if (fd !== 0 && fd !== 1 && fd !== 2) {
+                        return WASI_ERRNO_BADF;
+                    }
+
+                    for (let offset = 0; offset < 24; offset += 1) {
+                        view.setUint8(fdstat + offset, 0);
+                    }
+
+                    view.setUint8(fdstat, WASI_FILETYPE_CHARACTER_DEVICE);
+                    return WASI_ERRNO_SUCCESS;
+                },
+
+                fd_close(fd) {
+                    return fd === 0 || fd === 1 || fd === 2
+                        ? WASI_ERRNO_SUCCESS
+                        : WASI_ERRNO_BADF;
+                },
+
+                fd_seek() {
+                    return WASI_ERRNO_SPIPE;
+                },
+
+                random_get(buffer, length) {
+                    const bytes = memoryBytes();
+                    if (!bytes) {
+                        return WASI_ERRNO_INVAL;
+                    }
+
+                    const target = bytes.subarray(buffer, buffer + length);
+                    const maxChunkLength = 65536;
+
+                    for (let offset = 0; offset < target.length; offset += maxChunkLength) {
+                        crypto.getRandomValues(target.subarray(offset, offset + maxChunkLength));
+                    }
+
+                    return WASI_ERRNO_SUCCESS;
+                },
+
+                proc_exit(code) {
+                    exitCode = code;
+                    throw exitSentinel;
+                },
+            };
+
+            return {
+                wasiImport,
+
+                get exitCode() {
+                    return exitCode;
+                },
+
+                initialize(wasmInstance) {
+                    instance = wasmInstance;
+
+                    if (typeof instance.exports._initialize === "function") {
+                        instance.exports._initialize();
+                    }
+                },
+
+                startOrRunMain(wasmInstance = instance) {
+                    if (!wasmInstance) {
+                        throw new Error("MiniWASI has not been initialized with a WebAssembly instance.");
+                    }
+
+                    instance = wasmInstance;
+
+                    try {
+                        if (typeof instance.exports.main === "function") {
+                            instance.exports.main();
+                        } else if (typeof instance.exports._start === "function") {
+                            instance.exports._start();
+                        } else {
+                            throw new Error("WASM module exports neither main nor _start.");
+                        }
+                    } catch (error) {
+                        if (error !== exitSentinel) {
+                            throw error;
+                        }
+                    }
+
+                    return exitCode ?? 0;
+                },
+            };
+        }
+
+        async function fetchAndRunWASMWithMiniWASI() {
+            const appendOutput = (text) => {
+                document.body.append(document.createTextNode(text));
+            };
+            const miniWASI = createMiniWASI({
+                stdout: (text) => {
+                    appendOutput(text);
+                    console.log(text);
+                },
+                stderr: (text) => {
+                    appendOutput(text);
+                    console.error(text);
+                },
+            });
+
+            try {
+                const source = await WebAssembly.instantiateStreaming(
+                    fetch("/swift-embedded.wasm"),
+                    {
+                        wasi_snapshot_preview1: miniWASI.wasiImport,
+                    }
+                );
+
+                miniWASI.initialize(source.instance);
+                miniWASI.startOrRunMain(source.instance);
+            } catch (error) {
+                console.error("MiniWASI failed to run /swift-embedded.wasm", error);
+            }
+        }
+
+        fetchAndRunWASMWithMiniWASI();
+    </script>
+</body>
+</html>
