@@ -262,7 +262,7 @@
 
             try {
                 const source = await WebAssembly.instantiateStreaming(
-                    fetch("/swift-embedded.wasm"),
+                    fetch("/playground-example.wasm"),
                     {
                         wasi_snapshot_preview1: miniWASI.wasiImport,
                     }
@@ -271,7 +271,7 @@
                 miniWASI.initialize(source.instance);
                 miniWASI.startOrRunMain(source.instance);
             } catch (error) {
-                console.error("MiniWASI failed to run /swift-embedded.wasm", error);
+                console.error("MiniWASI failed to run /playground-example.wasm", error);
             }
         }
 
