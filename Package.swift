@@ -7,10 +7,12 @@ let package = Package(
         .macOS(.v26),
     ],
     products: [
+        .executable(name: "wasm-builder", targets: ["WASMBuilderCLI"]),
         .executable(name: "server", targets: ["Server"]),
         .library(name: "App", targets: ["App"]),
     ],
     dependencies: [
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.7.0"),
         .package(
             url: "https://github.com/swiftlang/swift-subprocess.git",
             .upToNextMinor(from: "0.4.0")
@@ -22,6 +24,13 @@ let package = Package(
             name: "Server",
             dependencies: [
                 .target(name: "App"),
+            ],
+        ),
+        .executableTarget(
+            name: "WASMBuilderCLI",
+            dependencies: [
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .target(name: "WASMBuilder"),
             ],
         ),
         .target(
