@@ -153,6 +153,9 @@ private func wasmEntryPointShim(entryPointType: String) -> String {
 #if os(WASI)
 @_expose(wasm, "main")
 @_cdecl("main")
+#if !hasFeature(Embedded)
+@MainActor
+#endif
 public func main() {
     \(entryPointType).main()
 }
